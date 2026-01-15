@@ -71,4 +71,4 @@ sleep 5
 
 echo
 echo "Starting reproducer..."
-exec "$SCRIPT_DIR/burst-trigger" -d "$TEST_DIR" -a
+exec "$SCRIPT_DIR/burst-trigger" -d "$TEST_DIR"

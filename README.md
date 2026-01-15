@@ -49,7 +49,7 @@ gcc -O2 -pthread -o burst-trigger burst-trigger.c
 sudo mkdir -p /mnt/nats-data/test-inline
 
 # 5. Run the reproducer
-sudo ./burst-trigger -d /mnt/nats-data/test-inline -a
+sudo ./burst-trigger -d /mnt/nats-data/test-inline
 ```
 
 **WARNING**: When successful, this WILL crash the machine. Run on a non-production
@@ -58,22 +58,22 @@ node or be prepared for an immediate reboot.
 ## Command Options
 
 ```
-Usage: ./burst-trigger [-d dir] [-f files] [-c converters] [-a]
+Usage: ./burst-trigger [-d dir] [-w writers] [-s syncers] [-f files]
 
 Options:
-  -d dir         Test directory (default: /mnt/ext4-test/burst)
-  -f files       Files per burst (default: 1000)
-  -c converters  Converter threads (default: 16)
-  -a             Apply aggressive writeback sysctl settings (recommended)
+  -d dir      Test directory (default: /mnt/ext4-test/trigger)
+  -w writers  Number of writer threads (default: 16)
+  -s syncers  Number of syncer threads (default: 4)
+  -f files    Files per writer (default: 50)
 ```
 
 ## Expected Behavior
 
-When running, the tool outputs:
+When running, the tool outputs progress every 5 seconds:
 
 ```
-[10s] Bursts: 50, Conversions: 50000, Rate: 5000/s
-[20s] Bursts: 100, Conversions: 100000, Rate: 5000/s
+[5s] ops=2500 syncs=450 rate=500/s dirty=128KB wb=64KB
+[10s] ops=5200 syncs=920 rate=520/s dirty=256KB wb=128KB
 ```
 
 If the bug triggers, the machine will crash with a kernel panic similar to:
@@ -104,18 +104,19 @@ tune2fs -l /dev/<your-device> | grep inline
 
 # Run reproducer again - it should NOT crash
 sudo mkdir -p /mnt/nats-data/test-inline
-sudo ./burst-trigger -d /mnt/nats-data/test-inline -a
+sudo ./burst-trigger -d /mnt/nats-data/test-inline
 ```
 
 With `inline_data` disabled, the tool will run indefinitely without crashing.
 
 ## How It Works
 
-The tool uses a coordinated 3-phase approach to maximize race probability:
+The tool uses concurrent writer and syncer threads to maximize race probability:
 
-1. **ACCUMULATE**: Create 1000 files at 140 bytes (90% of inline threshold)
-2. **TRIGGER**: Call `sync_file_range()` to start non-blocking writeback
-3. **CONVERT**: Immediately expand files to 200 bytes (forces inline-to-extent)
+1. **Writer threads** create small files (100 bytes, stored inline in inode)
+2. **Writers** immediately expand files to 200 bytes (forces inline-to-extent conversion)
+3. **Syncer threads** continuously call `sync()` to trigger writeback
+4. Half the writers use an aggressive pattern (batch create, sync, expand)
 
 The race occurs when writeback (checking inline status) happens simultaneously
 with the conversion (clearing the inline flag).
@@ -123,6 +124,8 @@ with the conversion (clearing the inline flag).
 ## Files
 
 - `burst-trigger.c` - The reproduction tool
+- `run-repro.sh` - Helper script that compiles and runs the tool
+- `check-filesystem.sh` - Check if a filesystem has inline_data enabled
 - `README.md` - This file
 
 ## Notes
@@ -130,7 +133,7 @@ with the conversion (clearing the inline flag).
 - The tool does not require NATS to be running
 - It must run on the same filesystem where NATS stores JetStream data
 - The bug is timing-dependent; multiple runs may be needed
-- Crash detection: the tool saves state to `/var/tmp/ext4-burst-state`
+- Crash detection: the tool saves state to `/var/tmp/ext4-repro-state`
 
 ## Support
 
